@@ -8,8 +8,8 @@ def obtener_stream_url(canal):
 
     def on_request(req):
         req_url = req.url.lower()
-        if ".m3u8" in req_url and "fubohd.com" in req_url:
-            print(f"[🔍 CAPTURADO] {req.url}")  # Log clave
+        if ".m3u8" in req_url and ("fubohd.com" in req_url or "hls" in req_url):
+            print(f"[🔍 CAPTURADO] {req.url}")
             captured_urls.append(req.url)
 
     with sync_playwright() as p:
@@ -33,6 +33,7 @@ def obtener_stream_url(canal):
                 timezone_id="America/Bogota",
             )
 
+            # Anti-detección
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => false });
                 window.chrome = { runtime: {} };
@@ -46,27 +47,27 @@ def obtener_stream_url(canal):
             print(f"[🚀] Cargando: {url}")
             page.goto(url, timeout=30000)
 
-            # Hacer clic en "Ver canal"
+            # Esperar a que cargue el iframe del reproductor
+            print("[⏳] Esperando 5 segundos a que cargue el iframe...")
+            page.wait_for_timeout(5000)
+
+            # Hacer clic en cualquier parte de la pantalla (para "reproducir")
             try:
-                print("[🖱️] Buscando botón 'Ver canal'...")
-                btn = page.locator("text=Ver canal").first
-                if btn.is_visible(timeout=5000):
-                    btn.click()
-                    print("[✅] Clic en 'Ver canal' realizado")
+                print("[🖱️] Haciendo clic en cualquier parte de la pantalla...")
+                # Intentar clic en el iframe
+                iframe = page.frame_locator("iframe").first
+                if iframe.is_visible():
+                    iframe.locator("body").click(timeout=5000)
+                    print("[✅] Clic en iframe realizado")
                 else:
-                    print("[⚠️] Botón 'Ver canal' no visible")
+                    # Si no hay iframe, clic en el body
+                    page.locator("body").click(timeout=5000)
+                    print("[✅] Clic en body realizado")
             except Exception as e:
-                print(f"[❌] Error clic: {e}")
+                print(f"[⚠️] Error al hacer clic: {e}")
 
-            # Hacer clic en el body (por si el reproductor requiere interacción)
-            try:
-                page.locator("body").click(timeout=5000)
-                print("[🖱️] Clic en body realizado")
-            except:
-                pass
-
-            # Esperar carga
-            print("[⏳] Esperando 12 segundos a que se genere el stream...")
+            # Esperar a que se genere el stream
+            print("[⏳] Esperando 12 segundos a que se cargue el stream...")
             page.wait_for_timeout(12000)
 
             browser.close()
@@ -75,11 +76,11 @@ def obtener_stream_url(canal):
                 print(f"[🎉] Stream encontrado para {canal}: {captured_urls[0]}")
                 return captured_urls[0]
             else:
-                print(f"[❌] No se encontró stream para {canal}")
+                print(f"[❌] No se capturó ningún .m3u8 para {canal}")
                 return None
 
         except Exception as e:
-            print(f"[💥] Error grave en {canal}: {e}")
+            print(f"[💥] Error en {canal}: {e}")
             if browser:
                 browser.close()
             return None
