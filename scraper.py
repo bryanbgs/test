@@ -2,32 +2,26 @@
 from playwright.sync_api import sync_playwright
 import time
 
-# Dominios conocidos de streams
-STREAM_KEYWORDS = ["fubohd.com", "m3u8", "hls"]
-
 def obtener_stream_url(canal):
-    """
-    Va directamente a la URL del canal y captura el .m3u8
-    """
     url = f"https://la14hd.com/vivo/canales.php?stream={canal}"
     captured_urls = []
 
     def on_request(req):
         req_url = req.url.lower()
-        if any(kw in req_url for kw in ["fubohd.com", "m3u8"]) and ".m3u8" in req_url:
-            print(f"[✔️] Capturado: {req.url}")
+        if ".m3u8" in req_url and "fubohd.com" in req_url:
+            print(f"[🔍 CAPTURADO] {req.url}")  # Log clave
             captured_urls.append(req.url)
 
     with sync_playwright() as p:
         browser = None
         try:
+            print(f"[🌐] Iniciando navegador para {canal}...")
             browser = p.chromium.launch(
                 headless=True,
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
-                    "--disable-blink-features=AutomationControlled",
-                    "--window-size=1920,1080"
+                    "--disable-blink-features=AutomationControlled"
                 ]
             )
 
@@ -39,50 +33,53 @@ def obtener_stream_url(canal):
                 timezone_id="America/Bogota",
             )
 
-            # Anti-detección
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => false });
                 window.chrome = { runtime: {} };
                 Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
                 Object.defineProperty(navigator, 'languages', { get: () => ['es-ES', 'es'] });
-                Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
             """)
 
             page = context.new_page()
             page.on("request", on_request)
 
-            print(f"[🌐] Cargando: {url}")
+            print(f"[🚀] Cargando: {url}")
             page.goto(url, timeout=30000)
-            page.wait_for_load_state("networkidle", timeout=20000)
 
-            # Hacer clic en cualquier parte del reproductor para "reproducir"
+            # Hacer clic en "Ver canal"
             try:
-                print("[🖱️] Haciendo clic para reproducir...")
-                # Busca un iframe o el contenedor del video
-                iframe = page.frame_locator("iframe").first
-                if iframe.is_visible():
-                    iframe.locator("body").click(timeout=5000)
+                print("[🖱️] Buscando botón 'Ver canal'...")
+                btn = page.locator("text=Ver canal").first
+                if btn.is_visible(timeout=5000):
+                    btn.click()
+                    print("[✅] Clic en 'Ver canal' realizado")
                 else:
-                    # Si no hay iframe, haz clic en el body
-                    page.locator("body").click(timeout=5000)
-                print("[✅] Clic realizado")
+                    print("[⚠️] Botón 'Ver canal' no visible")
             except Exception as e:
-                print(f"[⚠️] Error al hacer clic: {e}")
+                print(f"[❌] Error clic: {e}")
 
-            # Esperar a que se cargue el stream
-            print("[⏳] Esperando 10 segundos a que se genere el stream...")
-            page.wait_for_timeout(10000)
+            # Hacer clic en el body (por si el reproductor requiere interacción)
+            try:
+                page.locator("body").click(timeout=5000)
+                print("[🖱️] Clic en body realizado")
+            except:
+                pass
 
-            # Espera adicional si el stream es lento
-            print("[🔍] Buscando streams adicionales...")
-            page.wait_for_timeout(5000)
+            # Esperar carga
+            print("[⏳] Esperando 12 segundos a que se genere el stream...")
+            page.wait_for_timeout(12000)
 
             browser.close()
 
-            return captured_urls[0] if captured_urls else None
+            if captured_urls:
+                print(f"[🎉] Stream encontrado para {canal}: {captured_urls[0]}")
+                return captured_urls[0]
+            else:
+                print(f"[❌] No se encontró stream para {canal}")
+                return None
 
         except Exception as e:
-            print(f"[❌] Error obteniendo stream para {canal}: {e}")
+            print(f"[💥] Error grave en {canal}: {e}")
             if browser:
                 browser.close()
             return None
