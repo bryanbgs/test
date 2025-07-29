@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: la14hd-iptv
+    plan: free
+    runtime: python
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+    buildCommand: "pip install -r requirements.txt && playwright install chromium"
+    startCommand: "python lista.py"
