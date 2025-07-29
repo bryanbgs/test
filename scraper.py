@@ -28,12 +28,14 @@ def obtener_stream_url(canal):
             context = browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
-                referer="https://la14hd.com/",
                 locale="es-ES",
                 timezone_id="America/Bogota",
+                extra_http_headers={
+                    "Referer": "https://la14hd.com/",
+                    "Origin": "https://la14hd.com"
+                }
             )
 
-            # Anti-detección
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => false });
                 window.chrome = { runtime: {} };
@@ -47,37 +49,27 @@ def obtener_stream_url(canal):
             print(f"[🚀] Cargando: {url}")
             page.goto(url, timeout=30000)
 
-            # Esperar a que cargue el iframe del reproductor
-            print("[⏳] Esperando 5 segundos a que cargue el iframe...")
+            # Esperar a que cargue el iframe
             page.wait_for_timeout(5000)
 
-            # Hacer clic en cualquier parte de la pantalla (para "reproducir")
+            # Hacer clic en cualquier parte de la pantalla
             try:
-                print("[🖱️] Haciendo clic en cualquier parte de la pantalla...")
-                # Intentar clic en el iframe
                 iframe = page.frame_locator("iframe").first
                 if iframe.is_visible():
                     iframe.locator("body").click(timeout=5000)
-                    print("[✅] Clic en iframe realizado")
                 else:
-                    # Si no hay iframe, clic en el body
                     page.locator("body").click(timeout=5000)
-                    print("[✅] Clic en body realizado")
+                print("[✅] Clic realizado para reproducir")
             except Exception as e:
                 print(f"[⚠️] Error al hacer clic: {e}")
 
-            # Esperar a que se genere el stream
-            print("[⏳] Esperando 12 segundos a que se cargue el stream...")
+            # Esperar a que se cargue el stream
+            print("[⏳] Esperando 12 segundos a que se genere el stream...")
             page.wait_for_timeout(12000)
 
             browser.close()
 
-            if captured_urls:
-                print(f"[🎉] Stream encontrado para {canal}: {captured_urls[0]}")
-                return captured_urls[0]
-            else:
-                print(f"[❌] No se capturó ningún .m3u8 para {canal}")
-                return None
+            return captured_urls[0] if captured_urls else None
 
         except Exception as e:
             print(f"[💥] Error en {canal}: {e}")
