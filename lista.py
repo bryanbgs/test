@@ -1,4 +1,4 @@
-from flask import Flask, Response, redirect
+from flask import Flask, Response, redirect, request
 import scraper
 import time
 import os
