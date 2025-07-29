@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: la14hd-iptv
+    name: tester
     plan: free
     runtime: python
     envVars:
