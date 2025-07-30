@@ -3,37 +3,24 @@ from flask import Flask, Response, request
 import scraper
 import time
 import os
-import re
 
 app = Flask(__name__)
 
-# Almacenamiento en memoria
 ULTIMA_ACTUALIZACION = 0
-STREAMS = {}  # { "foxsports": "https://...fubohd.com/...m3u8?token=..." }
+STREAMS = {}
 CACHE_SECONDS = 15 * 60  # 15 minutos
 
 
-def es_ip_valida(ip):
-    """Valida si una cadena es una dirección IPv4 válida"""
-    patron = r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
-    if re.match(patron, ip):
-        partes = ip.split(".")
-        return all(0 <= int(part) <= 255 for part in partes)
-    return False
-
-
 def leer_canales():
-    """Lee los canales desde canales.txt"""
     try:
         with open("canales.txt", "r", encoding="utf-8") as f:
             return [line.strip() for line in f if line.strip() and not line.startswith("#")]
     except Exception as e:
         print(f"[❌] Error leyendo canales.txt: {e}")
-        return ["foxsports", "tudn"]  # fallback
+        return ["foxsports", "tudn"]
 
 
 def actualizar_streams():
-    """Actualizar streams en caché (uso general, no por IP)"""
     global ULTIMA_ACTUALIZACION, STREAMS
     ahora = time.time()
     if ahora - ULTIMA_ACTUALIZACION < CACHE_SECONDS:
@@ -50,12 +37,11 @@ def actualizar_streams():
             if url_real:
                 nuevos_streams[canal] = url_real
                 print(f"[✅] Stream obtenido para {canal}")
+            elif canal in STREAMS:
+                print(f"[🔁] Usando caché para {canal}")
+                nuevos_streams[canal] = STREAMS[canal]
             else:
-                if canal in STREAMS:
-                    print(f"[🔁] Usando caché para {canal}")
-                    nuevos_streams[canal] = STREAMS[canal]
-                else:
-                    print(f"[❌] Sin stream ni caché para {canal}")
+                print(f"[❌] Sin stream ni caché para {canal}")
         except Exception as e:
             print(f"[💥] Error procesando {canal}: {e}")
             if canal in STREAMS:
@@ -68,27 +54,20 @@ def actualizar_streams():
 
 @app.route("/stream/<canal>")
 def get_user_stream(canal):
-    """Cada cliente genera su propio token desde su IP real"""
-    # Extraer IP real del cliente
     x_forwarded_for = request.headers.get('X-Forwarded-For')
-    if x_forwarded_for:
-        client_ip = x_forwarded_for.split(',')[0].strip()  # Primera IP = cliente real
-    else:
-        client_ip = request.remote_addr
-
-    # Validar IP
-    if not es_ip_valida(client_ip):
-        print(f"[⚠️] IP inválida detectada: {client_ip}, usando fallback")
-        client_ip = request.remote_addr
+    client_ip = x_forwarded_for.split(',')[0].strip() if x_forwarded_for else request.remote_addr
 
     print(f"[🔑] Cliente {client_ip} solicitando {canal}")
 
     try:
-        print(f"[🌐] Generando token para IP: {client_ip}")
         url_con_token = scraper.obtener_stream_url_para_cliente(canal, client_ip, timeout=30)
         if url_con_token:
             print(f"[✅] Token generado para {client_ip}")
-            return Response(url_con_token, mimetype="text/plain")
+            return Response(
+                url_con_token.strip(),
+                mimetype="application/vnd.apple.mpegurl",
+                headers={"Content-Disposition": "inline; filename=stream.m3u8"}
+            )
         else:
             return "No se pudo generar stream para tu IP", 404
     except Exception as e:
@@ -96,25 +75,8 @@ def get_user_stream(canal):
         return "Error generando stream", 500
 
 
-@app.route("/direct-proxy/<canal>")
-def direct_proxy_stream(canal):
-    """Genera token en tiempo real sin cache"""
-    x_forwarded_for = request.headers.get('X-Forwarded-For')
-    client_ip = x_forwarded_for.split(',')[0].strip() if x_forwarded_for else request.remote_addr
-    if not es_ip_valida(client_ip):
-        client_ip = request.remote_addr
-
-    print(f"[⚡] Generación directa para {client_ip} - {canal}")
-    url_fresh = scraper.obtener_stream_url_para_cliente(canal, client_ip, timeout=30)
-    if url_fresh:
-        return Response(url_fresh, mimetype="text/plain")
-    else:
-        return "Stream no disponible", 404
-
-
 @app.route("/direct/<canal>")
 def direct_url(canal):
-    """Devuelve la URL directa desde caché (sin token por IP)"""
     actualizar_streams()
     url_real = STREAMS.get(canal)
     if url_real:
@@ -125,12 +87,9 @@ def direct_url(canal):
 
 @app.route("/playlist.m3u")
 def playlist():
-    """Genera playlist M3U personalizada para la IP del cliente"""
     base_url = request.url_root.rstrip("/")
     x_forwarded_for = request.headers.get('X-Forwarded-For')
     client_ip = x_forwarded_for.split(',')[0].strip() if x_forwarded_for else request.remote_addr
-    if not es_ip_valida(client_ip):
-        client_ip = request.remote_addr
 
     m3u = f"#EXTM3U x-tvg-url=\"https://la14hd.com\"\n"
     m3u += f"# Generado para IP: {client_ip}\n"
@@ -146,12 +105,9 @@ def playlist():
 
 @app.route("/")
 def index():
-    """Página de prueba con instrucciones para VLC"""
     actualizar_streams()
     x_forwarded_for = request.headers.get('X-Forwarded-For')
     client_ip = x_forwarded_for.split(',')[0].strip() if x_forwarded_for else request.remote_addr
-    if not es_ip_valida(client_ip):
-        client_ip = request.remote_addr
 
     html = f"""
     <h1>🎯 la14hd Smart Proxy</h1>
@@ -171,54 +127,30 @@ def index():
         html += f'''
         <li style="margin: 10px 0;">
             <strong>{canal.upper()}</strong><br>
-            <a href="/stream/{canal}" target="_blank" style="color: #2196F3;">🎬 Obtener URL con tu IP</a> |
-            <a href="/direct-proxy/{canal}" target="_blank" style="color: #FF9800;">⚡ Generación directa</a>
+            <a href="/stream/{canal}" target="_blank" style="color: #2196F3;">🎬 Obtener URL con tu IP</a>
         </li>
         '''
-    html += """
+    html += f"""
     </ul>
     <h2>📄 Playlist:</h2>
-    <p><a href='/playlist.m3u' style="color: #4CAF50;">📥 Descargar playlist.m3u (personalizado para tu IP)</a></p>
+    <p><a href='/playlist.m3u' style="color: #4CAF50;">📥 Descargar playlist.m3u (para tu IP: {client_ip})</a></p>
     <h2>📺 Instrucciones VLC:</h2>
     <ol>
-        <li>Copia la URL "🎬 Obtener URL con tu IP"</li>
-        <li>Pégala en VLC → Media → Open Network Stream</li>
+        <li>Pega esta URL en VLC: <code>{request.url_root}stream/foxsports</code></li>
         <li>¡El token se genera automáticamente con tu IP!</li>
     </ol>
-    <h2>🔗 URLs para tu IP:</h2>
     """
-    base_url = request.url_root.rstrip("/")
-    for canal in canales:
-        html += f'<p><strong>{canal.upper()}:</strong> <code>{base_url}/stream/{canal}</code></p>'
-    html += "</div>"
     return html
 
 
 @app.route("/debug")
 def debug():
-    """Endpoint de debug simple"""
     return {
         "streams_disponibles": list(STREAMS.keys()),
         "total_streams": len(STREAMS),
         "ultima_actualizacion": time.ctime(ULTIMA_ACTUALIZACION) if ULTIMA_ACTUALIZACION else "Nunca",
         "cache_expira_en": max(0, int((CACHE_SECONDS - (time.time() - ULTIMA_ACTUALIZACION)) / 60)) if ULTIMA_ACTUALIZACION else 0
     }
-
-
-@app.route("/test/<canal>")
-def test_canal(canal):
-    """Probar un canal específico sin cache"""
-    print(f"[🧪] Prueba directa de {canal}")
-    x_forwarded_for = request.headers.get('X-Forwarded-For')
-    client_ip = x_forwarded_for.split(',')[0].strip() if x_forwarded_for else request.remote_addr
-    if not es_ip_valida(client_ip):
-        client_ip = request.remote_addr
-
-    url = scraper.obtener_stream_url_para_cliente(canal, client_ip, timeout=30)
-    if url:
-        return {"status": "success", "canal": canal, "url": url[:50] + "..."}
-    else:
-        return {"status": "failed", "canal": canal, "url": None}
 
 
 if __name__ == "__main__":
