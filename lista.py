@@ -178,33 +178,29 @@ def proxy_segment(canal, segment_url):
         'Origin': 'https://la14hd.com',
         'Accept': '*/*',
         'Connection': 'keep-alive',
-        'Cache-Control': 'no-cache'
     })
     
     try:
-        response = session.get(url_real, stream=True, timeout=30, allow_redirects=True)
+        print(f"[📥] Descargando segmento: {real_segment_url[:50]}...")
+        response = session.get(real_segment_url, timeout=10)
         
-        def generate_segment():
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
-        
-        return Response(
-            generate_segment(),
-            status=response.status_code,
-            mimetype='video/mp2t',
-            headers={
-                'Content-Length': response.headers.get('Content-Length'),
-                'Content-Range': response.headers.get('Content-Range'),
-                'Accept-Ranges': 'bytes',
-                'Cache-Control': 'no-cache',
-                'Access-Control-Allow-Origin': '*'
-            }
-        )
-        
+        if response.status_code == 200:
+            print(f"[✅] Segmento descargado ({len(response.content)} bytes)")
+            return Response(
+                response.content,
+                mimetype='video/mp2t',
+                headers={
+                    'Cache-Control': 'no-cache',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            )
+        else:
+            print(f"[❌] Error descargando segmento: {response.status_code}")
+            return "Segment failed", 404
+            
     except Exception as e:
-        print(f"[💥] Error sirviendo segmento: {e}")
-        return "Segment not available", 404
+        print(f"[💥] Error: {e}")
+        return "Segment error", 500
 
 @app.route("/test-direct/<canal>")
 def test_direct(canal):
