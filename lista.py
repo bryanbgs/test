@@ -176,11 +176,12 @@ def proxy_segment(canal, segment_url):
         'Referer': 'https://la14hd.com/',
         'Origin': 'https://la14hd.com',
         'Accept': '*/*',
-        'Range': request.headers.get('Range', '')
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache'
     })
     
     try:
-        response = session.get(real_segment_url, stream=True, timeout=15)
+        response = session.get(url_real, stream=True, timeout=30, allow_redirects=True)
         
         def generate_segment():
             for chunk in response.iter_content(chunk_size=8192):
@@ -203,6 +204,12 @@ def proxy_segment(canal, segment_url):
     except Exception as e:
         print(f"[💥] Error sirviendo segmento: {e}")
         return "Segment not available", 404
+
+@app.route("/test-direct/<canal>")
+def test_direct(canal):
+    actualizar_streams()
+    url_real = STREAMS.get(canal)
+    return redirect(url_real) if url_real else "No disponible"
 
 @app.route("/direct/<canal>")
 def direct_url(canal):
