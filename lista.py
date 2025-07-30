@@ -15,8 +15,8 @@ ACTUALIZANDO = False  # Flag para evitar múltiples actualizaciones simultáneas
 ERRORES_CANAL = {}  # Contador de errores por canal
 MAX_ERRORES_POR_CANAL = 3  # Máximo de errores antes de pausar un canal
 
-CACHE_SECONDS = 15 * 60  # 15 minutos
-TIMEOUT_ACTUALIZACION = 60  # Timeout máximo por canal en segundos
+CACHE_SECONDS = 20 * 60  # 20 minutos (más tiempo para reducir carga)
+TIMEOUT_ACTUALIZACION = 45  # Timeout más corto para Render
 
 def leer_canales():
     """Lee los canales desde canales.txt"""
@@ -80,10 +80,10 @@ def actualizar_streams():
         print(f"[🔄] Iniciando actualización de streams... [{datetime.now().strftime('%H:%M:%S')}]")
         canales = leer_canales()
         
-        # Limitar a máximo 5 canales para evitar sobrecarga
-        if len(canales) > 5:
-            print(f"[⚠️] Demasiados canales ({len(canales)}), limitando a 5")
-            canales = canales[:5]
+        # Limitar a máximo 3 canales para Render
+        if len(canales) > 3:
+            print(f"[⚠️] Demasiados canales ({len(canales)}), limitando a 3 para Render")
+            canales = canales[:3]
         
         nuevos_streams = {}
         canales_exitosos = 0
@@ -104,9 +104,9 @@ def actualizar_streams():
                 else:
                     print(f"[❌] Sin stream disponible para {canal}")
             
-            # Pequeña pausa entre canales para no sobrecargar
+            # Pausa más larga entre canales para Render
             if i < len(canales):
-                time.sleep(2)
+                time.sleep(5)  # Aumentado de 2 a 5 segundos
 
         # Actualizar streams solo si se obtuvo al menos uno exitoso
         if canales_exitosos > 0 or len(nuevos_streams) > 0:
@@ -116,7 +116,7 @@ def actualizar_streams():
         else:
             print(f"[⚠️] No se actualizó nada, manteniendo cache anterior")
             
-        print(f"[⏰] Próxima actualización en 15 minutos")
+            print(f"[⏰] Próxima actualización en 20 minutos")
         
     except Exception as e:
         print(f"[💥] Error general en actualización: {e}")
@@ -189,6 +189,18 @@ def index():
     """
     return html
 
+@app.route("/force-update")
+def force_update():
+    """Fuerza una actualización manual"""
+    global ULTIMA_ACTUALIZACION
+    if ACTUALIZANDO:
+        return {"status": "Ya se está actualizando", "actualizando": True}
+    
+    # Resetear el tiempo para forzar actualización
+    ULTIMA_ACTUALIZACION = 0
+    actualizar_streams_async()
+    return {"status": "Actualización iniciada", "actualizando": True}
+
 @app.route("/debug")
 def debug():
     """Página de debug para ver el estado interno"""
@@ -199,6 +211,11 @@ def debug():
         "errores_canal": ERRORES_CANAL,
         "cache_valido": time.time() - ULTIMA_ACTUALIZACION < CACHE_SECONDS
     }
+
+@app.route("/health")
+def health():
+    """Endpoint de salud para Render"""
+    return {"status": "ok", "streams": len(STREAMS), "actualizando": ACTUALIZANDO}
 
 if __name__ == "__main__":
     print("[🚀] Iniciando aplicación...")
