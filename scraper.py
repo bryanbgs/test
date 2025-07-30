@@ -49,41 +49,35 @@ def obtener_stream_url(canal):
             print(f"[🚀] Cargando: {url}")
             page.goto(url, timeout=30000)
 
-                        # Esperar un poco a que cargue el contenido
-            print("[⏳] Esperando a que se cargue el contenido...")
-            page.wait_for_timeout(5000)  # Espera inicial para que cargue el iframe o el reproductor
+            # Esperar a que cargue el iframe
+            page.wait_for_timeout(5000)
 
-            # Intentar hacer clic DENTRO del iframe solo si existe
+            # Hacer clic en el reproductor
             try:
-                # Esperar a que haya al menos un iframe
-                page.wait_for_selector("iframe", timeout=10000)
-                print("[🧩] Se detectó al menos un iframe")
-
-                # Obtener el primer iframe y hacer clic dentro de él
-                frame = page.frame_locator("iframe").first
-                # Hacer clic en cualquier parte del contenido del iframe
-                frame.locator("body").click(force=True, timeout=5000)
-                print("[✅] Clic realizado dentro del iframe")
-            except Exception as e:
-                print(f"[⚠️] No se encontró o no se pudo hacer clic en el iframe: {e}")
-
-                # Como fallback, hacer clic en el body de la página principal
+                iframe = page.frame_locator("iframe").first
                 try:
-                    page.click("body", force=True, timeout=5000)
-                    print("[🖱️] Clic en página principal (fallback)")
+                    iframe.locator("body").click(timeout=5000)
+                    print("[✅] Clic en iframe realizado")
                 except:
-                    print("[⚠️] No se pudo hacer clic ni en iframe ni en body")
+                    page.locator("body").click(timeout=5000)
+                    print("[✅] Clic en body realizado")
+            except Exception as e:
+                print(f"[⚠️] Error al hacer clic: {e}")
 
             # Esperar a que se cargue el stream
-            print("[⏳] Esperando 12 segundos a que se genere el stream...")
             page.wait_for_timeout(12000)
 
-            browser.close()
+            # Cerrar todo antes de salir
+            context.close()  # ← Cerramos el contexto
+            browser.close()  # ← Cerramos el navegador
 
             return captured_urls[0] if captured_urls else None
 
         except Exception as e:
             print(f"[💥] Error en {canal}: {e}")
             if browser:
-                browser.close()
+                try:
+                    browser.close()
+                except:
+                    pass
             return None
