@@ -99,3 +99,7 @@ def obtener_stream_url_para_cliente(canal, client_ip, timeout=30):
         elapsed = time.time() - start_time
         print(f"[💥] Error para {client_ip}: {str(e)[:100]} (duración: {elapsed:.2f}s)")
         return None
+
+def obtener_stream_url(canal, timeout=30):
+    """Versión para caché global"""
+    return obtener_stream_url_para_cliente(canal, "127.0.0.1", timeout=timeout)
