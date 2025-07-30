@@ -4,9 +4,6 @@ import time
 
 
 def obtener_stream_url_para_cliente(canal, client_ip, timeout=30):
-    """
-    Genera stream URL como si el cliente se conectara desde su propia IP
-    """
     print(f"[🔑] Generando token para {canal} desde IP cliente: {client_ip}")
     url = f"https://la14hd.com/vivo/canales.php?stream={canal}"
     captured_urls = []
@@ -72,29 +69,15 @@ def obtener_stream_url_para_cliente(canal, client_ip, timeout=30):
                 browser.close()
                 return None
 
+            # Espera inicial para que se dispare la carga del stream
             print(f"[⏳] Procesando contenido para {client_ip}...")
             page.wait_for_timeout(3000)
 
-            iframe_found = False
-            try:
-                page.wait_for_selector("iframe", timeout=15000)
-                print(f"[🧩] Iframe detectado para {client_ip}")
-                frame = page.frame_locator("iframe").first
-                frame.locator("body").click(force=True, timeout=5000)
-                print(f"[✅] Clic en iframe para {client_ip}")
-                iframe_found = True
-            except Exception as e:
-                print(f"[⚠️] Sin iframe para {client_ip}: {e}")
-
-            if not iframe_found:
-                try:
-                    page.click("body", force=True, timeout=5000)
-                    print(f"[🖱️] Clic en body para {client_ip}")
-                except Exception as e:
-                    print(f"[⚠️] No se pudo hacer clic en body: {e}")
+            # ✅ NO HACEMOS CLIC EN IFAME NI EN BODY – ES INNECESARIO Y CAUSA INESTABILIDAD
+            # Los logs muestran que el .m3u8 se captura antes de cualquier clic
 
             print(f"[⏳] Esperando stream para {client_ip}...")
-            wait_time = 12
+            wait_time = 15
             for i in range(wait_time):
                 if captured_urls:
                     print(f"[🎯] Stream generado para {client_ip} en {i+1}s")
@@ -119,7 +102,5 @@ def obtener_stream_url_para_cliente(canal, client_ip, timeout=30):
 
 
 def obtener_stream_url(canal, timeout=30):
-    """
-    Obtiene la URL del stream (versión sin IP específica, para caché)
-    """
+    """Versión para caché global"""
     return obtener_stream_url_para_cliente(canal, "127.0.0.1", timeout=timeout)
