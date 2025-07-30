@@ -1,10 +1,10 @@
 # lista.py
-from flask import Flask, Response, redirect, request, abort
+from flask import Flask, Response, redirect, request
 import scraper
 import time
 import os
 import requests
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from functools import wraps
 
 app = Flask(__name__)
@@ -14,8 +14,6 @@ ULTIMA_ACTUALIZACION = 0
 STREAMS = {}  # { "foxsports": "https://...fubohd.com/...m3u8?token=..." }
 
 CACHE_SECONDS = 15 * 60  # 15 minutos
-
-# Configuración de timeout para requests
 REQUEST_TIMEOUT = 10  # segundos
 
 def leer_canales():
@@ -46,7 +44,6 @@ def actualizar_streams():
                 nuevos_streams[canal] = url_real
                 print(f"[✅] Stream obtenido para {canal}")
             else:
-                # Mantener caché si existe
                 if canal in STREAMS:
                     print(f"[🔁] Usando caché para {canal}")
                     nuevos_streams[canal] = STREAMS[canal]
@@ -54,7 +51,6 @@ def actualizar_streams():
                     print(f"[❌] Sin stream ni caché para {canal}")
         except Exception as e:
             print(f"[💥] Error procesando {canal}: {e}")
-            # Mantener caché si existe
             if canal in STREAMS:
                 print(f"[🔁] Usando caché para {canal} (por error)")
                 nuevos_streams[canal] = STREAMS[canal]
@@ -77,27 +73,12 @@ def add_response_headers(headers={}):
         return decorated_function
     return decorator
 
-@app.route("/stream/<canal>")
-@add_response_headers({
-    "Access-Control-Allow-Origin": "*",
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0"
-})
-def proxy_stream(canal):
-    """Proxy inverso que mantiene la IP del cliente"""
-    actualizar_streams()
-    url_real = STREAMS.get(canal)
-    
-    if not url_real:
-        return "Stream no disponible", 404
-    
-    # Extraer el dominio base para los headers
+def get_proxy_headers(url_real, request):
+    """Genera headers para las solicitudes proxy"""
     parsed_url = urlparse(url_real)
     domain = f"{parsed_url.scheme}://{parsed_url.netloc}"
     
-    # Configurar headers para mantener la IP original
-    headers = {
+    return {
         "Referer": domain + "/",
         "Origin": domain,
         "User-Agent": request.headers.get("User-Agent", ""),
@@ -106,13 +87,51 @@ def proxy_stream(canal):
         "Accept-Language": "en-US,en;q=0.9",
         "Connection": "keep-alive"
     }
+
+@app.route("/stream/<path:subpath>")
+@add_response_headers({
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0"
+})
+def proxy_stream(subpath):
+    """Maneja tanto el canal principal como los segmentos TS"""
+    actualizar_streams()
     
-    # Hacer streaming del contenido
+    # Si es solo el nombre del canal (ej. foxsports)
+    if '/' not in subpath:
+        if subpath not in STREAMS:
+            return "Canal no disponible", 404
+            
+        url_real = STREAMS[subpath]
+        return proxy_m3u8(url_real)
+    
+    # Si es un segmento TS (ej. foxsports/segmento.ts)
+    canal, *segments = subpath.split('/', 1)
+    if canal not in STREAMS:
+        return "Canal no encontrado", 404
+        
+    url_base = STREAMS[canal]
+    parsed_url = urlparse(url_base)
+    segment_path = segments[0]
+    
+    # Construir URL completa del segmento
+    if parsed_url.path.endswith('.m3u8'):
+        base_path = parsed_url.path.rsplit('/', 1)[0]
+    else:
+        base_path = parsed_url.path
+        
+    url_real = f"{parsed_url.scheme}://{parsed_url.netloc}{base_path}/{segment_path}"
+    
+    return proxy_segment(url_real)
+
+def proxy_m3u8(url_real):
+    """Proxy para archivos M3U8 que reescribe las URLs de los segmentos"""
     try:
         req = requests.get(
             url_real,
-            headers=headers,
-            stream=True,
+            headers=get_proxy_headers(url_real, request),
             timeout=REQUEST_TIMEOUT
         )
         
@@ -120,17 +139,57 @@ def proxy_stream(canal):
             print(f"[⚠️] Respuesta no exitosa: {req.status_code}")
             return "Error al obtener el stream", 502
             
-        return Response(
-            req.iter_content(chunk_size=1024*16),  # 16KB chunks
-            content_type=req.headers.get('Content-Type', 'application/octet-stream'),
-            status=req.status_code
-        )
+        content_type = req.headers.get('Content-Type', 'application/vnd.apple.mpegurl')
+        
+        if 'mpegurl' in content_type.lower():
+            base_url = request.url_root.rstrip('/')
+            content = req.text
+            
+            # Reescribir URLs de segmentos
+            lines = []
+            for line in content.split('\n'):
+                if line and not line.startswith('#') and line.endswith('.ts'):
+                    # Extraer el nombre del canal de la URL original
+                    parsed = urlparse(url_real)
+                    channel_name = parsed.path.split('/')[-1].replace('.m3u8', '')
+                    line = f"{base_url}/stream/{channel_name}/{line}"
+                lines.append(line)
+            
+            return Response('\n'.join(lines), content_type=content_type)
+        else:
+            return Response(req.content, content_type=content_type)
+            
     except requests.exceptions.Timeout:
-        print(f"[⏰] Timeout al obtener stream para {canal}")
+        print(f"[⏰] Timeout al obtener M3U8")
         return "Timeout al conectar con el servidor", 504
     except Exception as e:
-        print(f"[💥] Error en proxy para {canal}: {str(e)}")
+        print(f"[💥] Error en proxy M3U8: {str(e)}")
         return "Error al obtener el stream", 502
+
+def proxy_segment(url_real):
+    """Proxy para segmentos TS"""
+    try:
+        req = requests.get(
+            url_real,
+            headers=get_proxy_headers(url_real, request),
+            stream=True,
+            timeout=REQUEST_TIMEOUT
+        )
+        
+        if req.status_code != 200:
+            print(f"[⚠️] Respuesta no exitosa para segmento: {req.status_code}")
+            return "Error al obtener el segmento", 502
+            
+        return Response(
+            req.iter_content(chunk_size=1024*16),
+            content_type=req.headers.get('Content-Type', 'video/MP2T')
+        )
+    except requests.exceptions.Timeout:
+        print(f"[⏰] Timeout al obtener segmento TS")
+        return "Timeout al conectar con el servidor", 504
+    except Exception as e:
+        print(f"[💥] Error en proxy segmento: {str(e)}")
+        return "Error al obtener el segmento", 502
 
 @app.route("/playlist.m3u")
 def playlist():
