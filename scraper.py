@@ -49,19 +49,30 @@ def obtener_stream_url(canal):
             print(f"[🚀] Cargando: {url}")
             page.goto(url, timeout=30000)
 
-            # Esperar a que cargue el iframe
-            page.wait_for_timeout(5000)
+                        # Esperar un poco a que cargue el contenido
+            print("[⏳] Esperando a que se cargue el contenido...")
+            page.wait_for_timeout(5000)  # Espera inicial para que cargue el iframe o el reproductor
 
-            # Hacer clic en cualquier parte de la pantalla
+            # Intentar hacer clic DENTRO del iframe solo si existe
             try:
-                iframe = page.frame_locator("iframe").first
-                if iframe.is_visible():
-                    iframe.locator("body").click(timeout=5000)
-                else:
-                    page.locator("body").click(timeout=5000)
-                print("[✅] Clic realizado para reproducir")
+                # Esperar a que haya al menos un iframe
+                page.wait_for_selector("iframe", timeout=10000)
+                print("[🧩] Se detectó al menos un iframe")
+
+                # Obtener el primer iframe y hacer clic dentro de él
+                frame = page.frame_locator("iframe").first
+                # Hacer clic en cualquier parte del contenido del iframe
+                frame.locator("body").click(force=True, timeout=5000)
+                print("[✅] Clic realizado dentro del iframe")
             except Exception as e:
-                print(f"[⚠️] Error al hacer clic: {e}")
+                print(f"[⚠️] No se encontró o no se pudo hacer clic en el iframe: {e}")
+
+                # Como fallback, hacer clic en el body de la página principal
+                try:
+                    page.click("body", force=True, timeout=5000)
+                    print("[🖱️] Clic en página principal (fallback)")
+                except:
+                    print("[⚠️] No se pudo hacer clic ni en iframe ni en body")
 
             # Esperar a que se cargue el stream
             print("[⏳] Esperando 12 segundos a que se genere el stream...")
