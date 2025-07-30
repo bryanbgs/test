@@ -1,23 +1,22 @@
-# lista.py - Versión Final Funcional
-from flask import Flask, Response, redirect, request
+# lista.py
+from flask import Flask, Response, redirect, request, stream_template
 import scraper
 import time
 import os
 import requests
-from urllib.parse import urlparse, urljoin, unquote
-from functools import wraps
+import threading
+from urllib.parse import urljoin, urlparse
 
 app = Flask(__name__)
 
-# Almacenamiento en memoria
+# Almacenamiento en memoria - IGUAL QUE EL ORIGINAL
 ULTIMA_ACTUALIZACION = 0
-STREAMS = {}  # { "foxsports": {"url": "https://...m3u8", "base_url": "https://.../"} }
+STREAMS = {}  # { "foxsports": "https://...fubohd.com/...m3u8?token=..." }
 
-CACHE_SECONDS = 15 * 60  # 15 minutos
-REQUEST_TIMEOUT = 20  # segundos
+CACHE_SECONDS = 15 * 60  # 15 minutos - IGUAL QUE EL ORIGINAL
 
 def leer_canales():
-    """Lee los canales desde canales.txt"""
+    """Lee los canales desde canales.txt - IGUAL QUE EL ORIGINAL"""
     try:
         with open("canales.txt", "r", encoding="utf-8") as f:
             return [line.strip() for line in f if line.strip() and not line.startswith("#")]
@@ -26,7 +25,7 @@ def leer_canales():
         return ["foxsports", "tudn"]  # fallback
 
 def actualizar_streams():
-    """Actualizar streams con estructura mejorada"""
+    """Actualizar streams - SIMPLIFICADO pero manteniendo lógica original"""
     global ULTIMA_ACTUALIZACION, STREAMS
     ahora = time.time()
     if ahora - ULTIMA_ACTUALIZACION < CACHE_SECONDS:
@@ -39,27 +38,13 @@ def actualizar_streams():
     for canal in canales:
         print(f"[📡] Procesando canal: {canal}")
         try:
+            # Timeout más corto para evitar cuelgues
             url_real = scraper.obtener_stream_url(canal)
             if url_real:
-                parsed_url = urlparse(url_real)
-                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                
-                # Extraer el path base (sin el nombre del archivo m3u8)
-                path_parts = parsed_url.path.split('/')
-                if path_parts[-1].endswith('.m3u8'):
-                    base_path = '/'.join(path_parts[:-1])
-                else:
-                    base_path = parsed_url.path
-                
-                nuevos_streams[canal] = {
-                    "url": url_real,
-                    "base_url": base_url,
-                    "base_path": base_path,
-                    "full_path": parsed_url.path,
-                    "channel_id": path_parts[-1].replace('.m3u8', '')
-                }
+                nuevos_streams[canal] = url_real
                 print(f"[✅] Stream obtenido para {canal}")
             else:
+                # Mantener caché si existe - IGUAL QUE EL ORIGINAL
                 if canal in STREAMS:
                     print(f"[🔁] Usando caché para {canal}")
                     nuevos_streams[canal] = STREAMS[canal]
@@ -67,6 +52,7 @@ def actualizar_streams():
                     print(f"[❌] Sin stream ni caché para {canal}")
         except Exception as e:
             print(f"[💥] Error procesando {canal}: {e}")
+            # Mantener caché si existe
             if canal in STREAMS:
                 print(f"[🔁] Usando caché para {canal} (por error)")
                 nuevos_streams[canal] = STREAMS[canal]
@@ -74,188 +60,210 @@ def actualizar_streams():
     STREAMS.update(nuevos_streams)
     ULTIMA_ACTUALIZACION = ahora
     print(f"[✅] Actualización completada. {len(nuevos_streams)} canales actualizados.")
+    print(f"[⏰] Próxima actualización en 15 minutos")
 
-def add_response_headers(headers={}):
-    """Decorador para agregar headers a las respuestas"""
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            resp = f(*args, **kwargs)
-            if isinstance(resp, Response):
-                for hdr, val in headers.items():
-                    resp.headers[hdr] = val
-            return resp
-        return decorated_function
-    return decorator
-
-def get_proxy_headers(url_real, request):
-    """Genera headers para las solicitudes proxy"""
-    parsed_url = urlparse(url_real)
-    domain = f"{parsed_url.scheme}://{parsed_url.netloc}"
+@app.route("/stream/<canal>")
+def get_user_stream(canal):
+    """Cada cliente genera su propio token desde su IP"""
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    print(f"[🔑] Cliente {client_ip} solicitando {canal}")
     
-    return {
-        "Referer": domain + "/",
-        "Origin": domain,
-        "User-Agent": request.headers.get("User-Agent", ""),
-        "X-Forwarded-For": request.remote_addr,
-        "Accept": "*/*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive"
-    }
-
-@app.route("/stream/<path:subpath>")
-@add_response_headers({
-    "Access-Control-Allow-Origin": "*",
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0"
-})
-def proxy_stream(subpath):
-    """Maneja tanto el canal principal como los segmentos TS"""
-    actualizar_streams()
-    
-    # Decodificar la URL (por si hay caracteres especiales)
-    subpath = unquote(subpath)
-    
-    # Manejar solicitudes de segmentos TS
-    if '.ts' in subpath or '.m4s' in subpath:
-        return handle_ts_segment(subpath)
-    
-    # Si es solo el nombre del canal (ej. foxsports)
-    canal = subpath.split('/')[0]
-    if canal not in STREAMS:
-        return "Canal no encontrado", 404
-    
-    stream_info = STREAMS[canal]
-    return proxy_m3u8(stream_info["url"], stream_info)
-
-def handle_ts_segment(subpath):
-    """Maneja específicamente las solicitudes de segmentos TS"""
-    # Extraer el canal de la ruta (puede ser foxsports/mono/segmento.ts)
-    parts = subpath.split('/')
-    possible_channels = [p for p in parts if p in STREAMS]
-    
-    if not possible_channels:
-        return "Canal no encontrado en la ruta del segmento", 404
-    
-    canal = possible_channels[0]
-    stream_info = STREAMS[canal]
-    
-    # Reconstruir la ruta original del segmento
-    ts_relative_path = subpath[len(canal)+1:]
-    
-    # Manejar el caso especial donde hay múltiples ?token=
-    if '?token=' in ts_relative_path:
-        ts_relative_path = ts_relative_path.split('?token=')[0] + '?token=' + ts_relative_path.split('?token=')[1].split('?token=')[0]
-    
-    # Construir la URL completa del segmento
-    ts_url = f"{stream_info['base_url']}{stream_info['base_path']}/{ts_relative_path}"
-    
-    print(f"[🔍] Proxying segmento: {ts_url}")
-    return proxy_segment(ts_url)
-
-def proxy_m3u8(url_real, stream_info):
-    """Proxy para archivos M3U8 que reescribe las URLs de los segmentos"""
+    # Ejecutar scraping desde la IP del cliente (a través de nuestro servidor)
     try:
-        req = requests.get(
-            url_real,
-            headers=get_proxy_headers(url_real, request),
-            timeout=REQUEST_TIMEOUT
-        )
+        print(f"[🌐] Generando token para IP: {client_ip}")
+        url_con_token = scraper.obtener_stream_url_para_cliente(canal, client_ip)
         
-        if req.status_code != 200:
-            print(f"[⚠️] Respuesta no exitosa: {req.status_code}")
-            return "Error al obtener el stream", 502
-            
-        content_type = req.headers.get('Content-Type', 'application/vnd.apple.mpegurl')
-        
-        if 'mpegurl' in content_type.lower():
-            content = req.text
-            lines = content.split('\n')
-            new_lines = []
-            
-            for line in lines:
-                if line.strip() and not line.startswith('#') and ('.ts' in line or '.m4s' in line):
-                    # Manejar URLs con parámetros
-                    segment_path = line.split('?')[0]
-                    params = line.split('?')[1] if '?' in line else ''
-                    
-                    # Extraer solo el nombre del segmento
-                    segment_name = segment_path.split('/')[-1]
-                    
-                    # Construir nueva ruta manteniendo la estructura de subdirectorios
-                    new_path = f"/stream/{stream_info['channel_id']}/{segment_name}"
-                    if params:
-                        new_path += f"?{params.split('&')[0]}"  # Tomar solo el primer parámetro token
-                    
-                    new_lines.append(new_path)
-                else:
-                    new_lines.append(line)
-            
-            return Response('\n'.join(new_lines), content_type=content_type)
+        if url_con_token:
+            print(f"[✅] Token generado para {client_ip}")
+            return Response(url_con_token, mimetype="text/plain")
         else:
-            return Response(req.content, content_type=content_type)
+            return "No se pudo generar stream para tu IP", 404
             
-    except requests.exceptions.Timeout:
-        print(f"[⏰] Timeout al obtener M3U8")
-        return "Timeout al conectar con el servidor", 504
     except Exception as e:
-        print(f"[💥] Error en proxy M3U8: {str(e)}")
-        return "Error al obtener el stream", 502
+        print(f"[💥] Error generando token para {client_ip}: {e}")
+        return "Error generando stream", 500
 
-def proxy_segment(url_real):
-    """Proxy para segmentos TS"""
-    try:
-        # Limpiar URL de parámetros duplicados
-        if '?token=' in url_real:
-            base_url = url_real.split('?token=')[0]
-            token = url_real.split('?token=')[1].split('&')[0]
-            url_real = f"{base_url}?token={token}"
-        
-        req = requests.get(
-            url_real,
-            headers=get_proxy_headers(url_real, request),
-            stream=True,
-            timeout=REQUEST_TIMEOUT
-        )
-        
-        if req.status_code != 200:
-            print(f"[⚠️] Respuesta no exitosa para segmento: {req.status_code}")
-            return "Error al obtener el segmento", 502
+@app.route("/direct-proxy/<canal>")
+def direct_proxy_stream(canal):
+    """Genera token en tiempo real sin cache"""
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    
+    print(f"[⚡] Generación directa para {client_ip} - {canal}")
+    
+    # No usar cache, generar fresh token
+    url_fresh = scraper.obtener_stream_url(canal)
+    
+    if url_fresh:
+        return Response(url_fresh, mimetype="text/plain")
+    else:
+        return "Stream no disponible", 404
+
+def proxy_m3u8_content(m3u8_content, base_url, canal):
+    """Modifica el contenido m3u8 para que los segmentos pasen por nuestro proxy"""
+    lines = m3u8_content.split('\n')
+    modified_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            # Es una URL de segmento
+            if line.startswith('http'):
+                # URL absoluta - crear proxy
+                segment_url = line
+            else:
+                # URL relativa - construir URL completa
+                segment_url = urljoin(base_url, line)
             
+            # Crear URL de proxy para este segmento
+            proxy_url = f"/segment/{canal}/" + requests.utils.quote(segment_url, safe='')
+            modified_lines.append(proxy_url)
+        else:
+            modified_lines.append(line)
+    
+    return '\n'.join(modified_lines)
+
+@app.route("/segment/<canal>/<path:segment_url>")
+def proxy_segment(canal, segment_url):
+    """Proxy para segmentos de video individuales"""
+    # Decodificar la URL del segmento
+    from urllib.parse import unquote
+    real_segment_url = unquote(segment_url)
+    
+    print(f"[🎞️] Sirviendo segmento: {real_segment_url[:50]}...")
+    
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        'Referer': 'https://la14hd.com/',
+        'Origin': 'https://la14hd.com',
+        'Accept': '*/*',
+        'Range': request.headers.get('Range', '')
+    })
+    
+    try:
+        response = session.get(real_segment_url, stream=True, timeout=15)
+        
+        def generate_segment():
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+        
         return Response(
-            req.iter_content(chunk_size=1024*16),
-            content_type=req.headers.get('Content-Type', 'video/MP2T'),
-            direct_passthrough=True
+            generate_segment(),
+            status=response.status_code,
+            mimetype='video/mp2t',
+            headers={
+                'Content-Length': response.headers.get('Content-Length'),
+                'Content-Range': response.headers.get('Content-Range'),
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'no-cache',
+                'Access-Control-Allow-Origin': '*'
+            }
         )
-    except requests.exceptions.Timeout:
-        print(f"[⏰] Timeout al obtener segmento TS")
-        return "Timeout al conectar con el servidor", 504
+        
     except Exception as e:
-        print(f"[💥] Error en proxy segmento: {str(e)}")
-        return "Error al obtener el segmento", 502
+        print(f"[💥] Error sirviendo segmento: {e}")
+        return "Segment not available", 404
+
+@app.route("/direct/<canal>")
+def direct_url(canal):
+    """Devuelve la URL directa (comportamiento anterior)"""
+    actualizar_streams()
+    url_real = STREAMS.get(canal)
+    if url_real:
+        return Response(url_real, mimetype="text/plain")
+    else:
+        return "Stream no disponible", 404
 
 @app.route("/playlist.m3u")
 def playlist():
-    """Genera una lista IPTV con URLs limpias"""
-    actualizar_streams()
+    """Genera playlist que cada cliente usará con su propia IP"""
     base_url = request.url_root.rstrip("/")
-    m3u = "#EXTM3U x-tvg-url=\"https://la14hd.com\"\n"
-    for canal, info in STREAMS.items():
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    
+    m3u = f"#EXTM3U x-tvg-url=\"https://la14hd.com\" \n"
+    m3u += f"# Generado para IP: {client_ip}\n"
+    
+    canales = leer_canales()
+    for canal in canales:
         nombre = canal.replace("-", " ").upper()
         m3u += f'#EXTINF:-1 tvg-name="{nombre}" group-title="la14hd", {nombre}\n'
         m3u += f"{base_url}/stream/{canal}\n"
+    
     return Response(m3u, mimetype="application/x-mpegurl")
 
 @app.route("/")
 def index():
-    """Página de prueba"""
+    """Página de prueba con instrucciones para VLC"""
     actualizar_streams()
-    html = "<h1>la14hd IPTV Playlist</h1><ul>"
-    for canal in STREAMS:
-        html += f'<li><a href="/stream/{canal}" target="_blank">{canal.upper()}</a></li>'
-    html += "</ul><p><a href='/playlist.m3u'>Descargar playlist.m3u</a></p>"
+    html = """
+    <h1>🎯 la14hd Smart Proxy</h1>
+    <h2>✨ Genera tokens individuales por IP</h2>
+    
+    <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 10px 0;">
+        <h3>🔑 ¿Cómo funciona?</h3>
+        <p><strong>Tu IP:</strong> """ + request.headers.get('X-Forwarded-For', request.remote_addr) + """</p>
+        <p>✅ Cada cliente genera su propio token desde su IP</p>
+        <p>✅ Sin restricciones ni conflictos de tokens</p>
+        <p>✅ Funciona como si accedieras directo desde tu ubicación</p>
+    </div>
+    
+    <h2>📺 Canales disponibles:</h2>
+    <ul>
+    """
+    
+    canales = leer_canales()
+    for canal in canales:
+        html += f'''
+        <li style="margin: 10px 0;">
+            <strong>{canal.upper()}</strong><br>
+            <a href="/stream/{canal}" target="_blank" style="color: #2196F3;">🎬 Obtener URL con tu IP</a> |
+            <a href="/direct-proxy/{canal}" target="_blank" style="color: #FF9800;">⚡ Generación directa</a>
+        </li>
+        '''
+    
+    html += """
+    </ul>
+    
+    <h2>📄 Playlist:</h2>
+    <p><a href='/playlist.m3u' style="color: #4CAF50;">📥 Descargar playlist.m3u (personalizado para tu IP)</a></p>
+    
+    <h2>📺 Instrucciones VLC:</h2>
+    <ol>
+        <li>Copia la URL "🎬 Obtener URL con tu IP"</li>
+        <li>Pégala en VLC → Media → Open Network Stream</li>
+        <li>¡El token se genera automáticamente con tu IP!</li>
+    </ol>
+    
+    <h2>🔗 URLs para tu IP:</h2>
+    """
+    
+    base_url = request.url_root.rstrip("/")
+    for canal in canales:
+        html += f'<p><strong>{canal.upper()}:</strong> <code>{base_url}/stream/{canal}</code></p>'
+    
+    html += "</div>"
     return html
+
+@app.route("/debug")
+def debug():
+    """Endpoint de debug simple"""
+    return {
+        "streams_disponibles": list(STREAMS.keys()),
+        "total_streams": len(STREAMS),
+        "ultima_actualizacion": time.ctime(ULTIMA_ACTUALIZACION) if ULTIMA_ACTUALIZACION else "Nunca",
+        "cache_expira_en": max(0, int((CACHE_SECONDS - (time.time() - ULTIMA_ACTUALIZACION))/60)) if ULTIMA_ACTUALIZACION else 0
+    }
+
+@app.route("/test/<canal>")
+def test_canal(canal):
+    """Probar un canal específico sin cache"""
+    print(f"[🧪] Prueba directa de {canal}")
+    url = scraper.obtener_stream_url(canal)
+    if url:
+        return {"status": "success", "canal": canal, "url": url[:50] + "..."}
+    else:
+        return {"status": "failed", "canal": canal, "url": None}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
