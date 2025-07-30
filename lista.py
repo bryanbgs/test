@@ -147,14 +147,15 @@ def proxy_m3u8_content(m3u8_content, base_url, canal):
         if line and not line.startswith('#'):
             # Es una URL de segmento
             if line.startswith('http'):
-                # URL absoluta - crear proxy
                 segment_url = line
             else:
                 # URL relativa - construir URL completa
                 segment_url = urljoin(base_url, line)
             
-            # Crear URL de proxy para este segmento
-            proxy_url = f"/segment/{canal}/" + requests.utils.quote(segment_url, safe='')
+            # AQUÍ ESTÁ EL FIX: Encodear correctamente la URL
+            from urllib.parse import quote
+            encoded_url = quote(segment_url, safe='')
+            proxy_url = f"/segment/{canal}/{encoded_url}"
             modified_lines.append(proxy_url)
         else:
             modified_lines.append(line)
