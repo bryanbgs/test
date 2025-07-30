@@ -1,4 +1,4 @@
-# lista.py
+# lista.py - Versión Final Corregida
 from flask import Flask, Response, redirect, request
 import scraper
 import time
@@ -6,15 +6,16 @@ import os
 import requests
 from urllib.parse import urlparse, urljoin
 from functools import wraps
+import re
 
 app = Flask(__name__)
 
 # Almacenamiento en memoria
 ULTIMA_ACTUALIZACION = 0
-STREAMS = {}  # { "foxsports": "https://...fubohd.com/...m3u8?token=..." }
+STREAMS = {}  # { "foxsports": {"url": "https://...m3u8", "base_url": "https://.../"} }
 
 CACHE_SECONDS = 15 * 60  # 15 minutos
-REQUEST_TIMEOUT = 10  # segundos
+REQUEST_TIMEOUT = 15  # segundos
 
 def leer_canales():
     """Lee los canales desde canales.txt"""
@@ -26,7 +27,7 @@ def leer_canales():
         return ["foxsports", "tudn"]  # fallback
 
 def actualizar_streams():
-    """Actualizar streams"""
+    """Actualizar streams con estructura mejorada"""
     global ULTIMA_ACTUALIZACION, STREAMS
     ahora = time.time()
     if ahora - ULTIMA_ACTUALIZACION < CACHE_SECONDS:
@@ -41,7 +42,13 @@ def actualizar_streams():
         try:
             url_real = scraper.obtener_stream_url(canal)
             if url_real:
-                nuevos_streams[canal] = url_real
+                parsed_url = urlparse(url_real)
+                base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                nuevos_streams[canal] = {
+                    "url": url_real,
+                    "base_url": base_url,
+                    "path": parsed_url.path
+                }
                 print(f"[✅] Stream obtenido para {canal}")
             else:
                 if canal in STREAMS:
@@ -58,7 +65,6 @@ def actualizar_streams():
     STREAMS.update(nuevos_streams)
     ULTIMA_ACTUALIZACION = ahora
     print(f"[✅] Actualización completada. {len(nuevos_streams)} canales actualizados.")
-    print(f"[⏰] Próxima actualización en {CACHE_SECONDS//60} minutos")
 
 def add_response_headers(headers={}):
     """Decorador para agregar headers a las respuestas"""
@@ -99,34 +105,26 @@ def proxy_stream(subpath):
     """Maneja tanto el canal principal como los segmentos TS"""
     actualizar_streams()
     
-    # Si es solo el nombre del canal (ej. foxsports)
-    if '/' not in subpath:
-        if subpath not in STREAMS:
-            return "Canal no disponible", 404
-            
-        url_real = STREAMS[subpath]
-        return proxy_m3u8(url_real)
-    
-    # Si es un segmento TS (ej. foxsports/segmento.ts)
-    canal, *segments = subpath.split('/', 1)
+    # Extraer el nombre del canal (primera parte de la ruta)
+    canal = subpath.split('/')[0]
     if canal not in STREAMS:
         return "Canal no encontrado", 404
-        
-    url_base = STREAMS[canal]
-    parsed_url = urlparse(url_base)
-    segment_path = segments[0]
     
-    # Construir URL completa del segmento
-    if parsed_url.path.endswith('.m3u8'):
-        base_path = parsed_url.path.rsplit('/', 1)[0]
-    else:
-        base_path = parsed_url.path
-        
-    url_real = f"{parsed_url.scheme}://{parsed_url.netloc}{base_path}/{segment_path}"
+    stream_info = STREAMS[canal]
+    url_real = stream_info["url"]
+    base_url = stream_info["base_url"]
     
-    return proxy_segment(url_real)
+    # Si es solo el nombre del canal, devolver el M3U8 procesado
+    if subpath == canal:
+        return proxy_m3u8(url_real, base_url)
+    
+    # Si es un segmento TS, construir la URL correcta
+    ts_path = subpath[len(canal)+1:]  # Remover el nombre del canal
+    ts_url = f"{base_url}/{ts_path}"
+    
+    return proxy_segment(ts_url)
 
-def proxy_m3u8(url_real):
+def proxy_m3u8(url_real, base_url):
     """Proxy para archivos M3U8 que reescribe las URLs de los segmentos"""
     try:
         req = requests.get(
@@ -142,20 +140,23 @@ def proxy_m3u8(url_real):
         content_type = req.headers.get('Content-Type', 'application/vnd.apple.mpegurl')
         
         if 'mpegurl' in content_type.lower():
-            base_url = request.url_root.rstrip('/')
             content = req.text
+            lines = content.split('\n')
+            new_lines = []
             
-            # Reescribir URLs de segmentos
-            lines = []
-            for line in content.split('\n'):
-                if line and not line.startswith('#') and line.endswith('.ts'):
-                    # Extraer el nombre del canal de la URL original
-                    parsed = urlparse(url_real)
-                    channel_name = parsed.path.split('/')[-1].replace('.m3u8', '')
-                    line = f"{base_url}/stream/{channel_name}/{line}"
-                lines.append(line)
+            for line in lines:
+                if line.strip() and not line.startswith('#') and ('.ts' in line or '.m4s' in line):
+                    # Extraer solo el nombre del segmento (última parte de la URL)
+                    segment_name = line.split('/')[-1].split('?')[0]
+                    new_line = f"/stream/{urlparse(url_real).path.split('/')[-1].replace('.m3u8', '')}/{segment_name}"
+                    # Mantener parámetros de consulta si existen
+                    if '?' in line:
+                        new_line += '?' + line.split('?')[1]
+                    new_lines.append(new_line)
+                else:
+                    new_lines.append(line)
             
-            return Response('\n'.join(lines), content_type=content_type)
+            return Response('\n'.join(new_lines), content_type=content_type)
         else:
             return Response(req.content, content_type=content_type)
             
@@ -197,7 +198,7 @@ def playlist():
     actualizar_streams()
     base_url = request.url_root.rstrip("/")
     m3u = "#EXTM3U x-tvg-url=\"https://la14hd.com\"\n"
-    for canal, url in STREAMS.items():
+    for canal, info in STREAMS.items():
         nombre = canal.replace("-", " ").upper()
         m3u += f'#EXTINF:-1 tvg-name="{nombre}" group-title="la14hd", {nombre}\n'
         m3u += f"{base_url}/stream/{canal}\n"
@@ -212,26 +213,6 @@ def index():
         html += f'<li><a href="/stream/{canal}" target="_blank">{canal.upper()}</a></li>'
     html += "</ul><p><a href='/playlist.m3u'>Descargar playlist.m3u</a></p>"
     return html
-
-@app.route("/debug")
-def debug():
-    """Endpoint de debug simple"""
-    return {
-        "streams_disponibles": list(STREAMS.keys()),
-        "total_streams": len(STREAMS),
-        "ultima_actualizacion": time.ctime(ULTIMA_ACTUALIZACION) if ULTIMA_ACTUALIZACION else "Nunca",
-        "cache_expira_en": max(0, int((CACHE_SECONDS - (time.time() - ULTIMA_ACTUALIZACION))/60)) if ULTIMA_ACTUALIZACION else 0
-    }
-
-@app.route("/test/<canal>")
-def test_canal(canal):
-    """Probar un canal específico sin cache"""
-    print(f"[🧪] Prueba directa de {canal}")
-    url = scraper.obtener_stream_url(canal)
-    if url:
-        return {"status": "success", "canal": canal, "url": url[:50] + "..."}
-    else:
-        return {"status": "failed", "canal": canal, "url": None}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
