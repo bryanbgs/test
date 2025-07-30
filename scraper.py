@@ -8,6 +8,7 @@ def obtener_stream_url(canal):
 
     def on_request(req):
         req_url = req.url.lower()
+        # Filtrar por .m3u8 y dominios relevantes
         if ".m3u8" in req_url and ("fubohd.com" in req_url or "hls" in req_url):
             print(f"[🔍 CAPTURADO] {req.url}")
             captured_urls.append(req.url)
@@ -36,6 +37,7 @@ def obtener_stream_url(canal):
                 }
             )
 
+            # Anti-detección de automatización
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => false });
                 window.chrome = { runtime: {} };
@@ -47,43 +49,35 @@ def obtener_stream_url(canal):
             page.on("request", on_request)
 
             print(f"[🚀] Cargando: {url}")
+            start_time = time.time()
             page.goto(url, timeout=30000)
 
-                        # Esperar un poco a que cargue el contenido
-            print("[⏳] Esperando a que se cargue el contenido...")
-            page.wait_for_timeout(5000)  # Espera inicial para que cargue el iframe o el reproductor
+            # Espera inicial breve para que cargue el contenido
+            print("[⏳] Esperando 6 segundos a que se genere el stream...")
+            page.wait_for_timeout(6000)  # Reducido: suficiente si no hay iframe
 
-            # Intentar hacer clic DENTRO del iframe solo si existe
+            # Opcional: hacer clic en body por si acaso (aunque no sea necesario)
             try:
-                # Esperar a que haya al menos un iframe
-                page.wait_for_selector("iframe", timeout=10000)
-                print("[🧩] Se detectó al menos un iframe")
+                page.click("body", force=True, timeout=3000)
+                print("[🖱️] Clic en página (seguridad)")
+            except:
+                pass  # No es crítico
 
-                # Obtener el primer iframe y hacer clic dentro de él
-                frame = page.frame_locator("iframe").first
-                # Hacer clic en cualquier parte del contenido del iframe
-                frame.locator("body").click(force=True, timeout=5000)
-                print("[✅] Clic realizado dentro del iframe")
-            except Exception as e:
-                print(f"[⚠️] No se encontró o no se pudo hacer clic en el iframe: {e}")
-
-                # Como fallback, hacer clic en el body de la página principal
-                try:
-                    page.click("body", force=True, timeout=5000)
-                    print("[🖱️] Clic en página principal (fallback)")
-                except:
-                    print("[⚠️] No se pudo hacer clic ni en iframe ni en body")
-
-            # Esperar a que se cargue el stream
-            print("[⏳] Esperando 12 segundos a que se genere el stream...")
-            page.wait_for_timeout(12000)
+            # Esperar un poco más para capturar el .m3u8 si llega tarde
+            remaining = 8000 - (time.time() - start_time) * 1000
+            if remaining > 0:
+                page.wait_for_timeout(int(remaining))
 
             browser.close()
 
+            # Devolver la primera URL .m3u8 capturada
             return captured_urls[0] if captured_urls else None
 
         except Exception as e:
             print(f"[💥] Error en {canal}: {e}")
             if browser:
-                browser.close()
+                try:
+                    browser.close()
+                except:
+                    pass
             return None
