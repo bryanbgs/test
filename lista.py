@@ -4,9 +4,8 @@ import scraper
 import time
 import os
 import requests
-from urllib.parse import urlparse, urljoin, parse_qs
+from urllib.parse import urlparse, urljoin, unquote
 from functools import wraps
-import re
 
 app = Flask(__name__)
 
@@ -15,7 +14,7 @@ ULTIMA_ACTUALIZACION = 0
 STREAMS = {}  # { "foxsports": {"url": "https://...m3u8", "base_url": "https://.../"} }
 
 CACHE_SECONDS = 15 * 60  # 15 minutos
-REQUEST_TIMEOUT = 20  # segundos (aumentado para streams lentos)
+REQUEST_TIMEOUT = 20  # segundos
 
 def leer_canales():
     """Lee los canales desde canales.txt"""
@@ -56,7 +55,8 @@ def actualizar_streams():
                     "url": url_real,
                     "base_url": base_url,
                     "base_path": base_path,
-                    "full_path": parsed_url.path
+                    "full_path": parsed_url.path,
+                    "channel_id": path_parts[-1].replace('.m3u8', '')
                 }
                 print(f"[✅] Stream obtenido para {canal}")
             else:
@@ -114,6 +114,9 @@ def proxy_stream(subpath):
     """Maneja tanto el canal principal como los segmentos TS"""
     actualizar_streams()
     
+    # Decodificar la URL (por si hay caracteres especiales)
+    subpath = unquote(subpath)
+    
     # Manejar solicitudes de segmentos TS
     if '.ts' in subpath or '.m4s' in subpath:
         return handle_ts_segment(subpath)
@@ -140,12 +143,15 @@ def handle_ts_segment(subpath):
     
     # Reconstruir la ruta original del segmento
     ts_relative_path = subpath[len(canal)+1:]
+    
+    # Manejar el caso especial donde hay múltiples ?token=
+    if '?token=' in ts_relative_path:
+        ts_relative_path = ts_relative_path.split('?token=')[0] + '?token=' + ts_relative_path.split('?token=')[1].split('?token=')[0]
+    
+    # Construir la URL completa del segmento
     ts_url = f"{stream_info['base_url']}{stream_info['base_path']}/{ts_relative_path}"
     
-    # Mantener los parámetros de consulta originales
-    if '?' in request.full_path:
-        ts_url += '?' + request.full_path.split('?')[1]
-    
+    print(f"[🔍] Proxying segmento: {ts_url}")
     return proxy_segment(ts_url)
 
 def proxy_m3u8(url_real, stream_info):
@@ -170,20 +176,19 @@ def proxy_m3u8(url_real, stream_info):
             
             for line in lines:
                 if line.strip() and not line.startswith('#') and ('.ts' in line or '.m4s' in line):
-                    # Manejar tanto URLs absolutas como relativas
-                    if line.startswith('http'):
-                        # Si es URL absoluta, extraer solo el segmento
-                        segment_name = line.split('/')[-1].split('?')[0]
-                        new_line = f"/stream/{stream_info['base_path'].lstrip('/')}/{segment_name}"
-                    else:
-                        # Si es relativa, mantener la estructura pero prefijar con /stream/canal
-                        new_line = f"/stream/{urlparse(url_real).path.split('/')[-1].replace('.m3u8', '')}/{line}"
+                    # Manejar URLs con parámetros
+                    segment_path = line.split('?')[0]
+                    params = line.split('?')[1] if '?' in line else ''
                     
-                    # Mantener parámetros de consulta si existen
-                    if '?' in line:
-                        new_line += '?' + line.split('?')[1]
+                    # Extraer solo el nombre del segmento
+                    segment_name = segment_path.split('/')[-1]
                     
-                    new_lines.append(new_line)
+                    # Construir nueva ruta manteniendo la estructura de subdirectorios
+                    new_path = f"/stream/{stream_info['channel_id']}/{segment_name}"
+                    if params:
+                        new_path += f"?{params.split('&')[0]}"  # Tomar solo el primer parámetro token
+                    
+                    new_lines.append(new_path)
                 else:
                     new_lines.append(line)
             
@@ -201,6 +206,12 @@ def proxy_m3u8(url_real, stream_info):
 def proxy_segment(url_real):
     """Proxy para segmentos TS"""
     try:
+        # Limpiar URL de parámetros duplicados
+        if '?token=' in url_real:
+            base_url = url_real.split('?token=')[0]
+            token = url_real.split('?token=')[1].split('&')[0]
+            url_real = f"{base_url}?token={token}"
+        
         req = requests.get(
             url_real,
             headers=get_proxy_headers(url_real, request),
