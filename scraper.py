@@ -102,4 +102,4 @@ def obtener_stream_url_para_cliente(canal, client_ip, timeout=30):
 
 def obtener_stream_url(canal, timeout=30):
     """Versión para caché global"""
-    return obtener_stream_url_para_cliente(canal, "127.0.0.1", timeout=timeout)
+    return obtener_stream_url_para_cliente(canal, "0.0.0.0", timeout=timeout)
