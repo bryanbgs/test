@@ -112,7 +112,7 @@ def index():
                 // Función para interceptar requests
                 let capturedUrl = null;
                 let attempts = 0;
-                const maxAttempts = 30; // 30 segundos máximo
+                const maxAttempts = 60; // 60 segundos máximo
                 
                 const checkForStream = () => {
                     attempts++;
