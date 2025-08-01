@@ -1,0 +1,144 @@
+<!-- templates/player.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Reproduciendo: {{ canal.upper() }}</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    .container {
+      width: 90%;
+      max-width: 1000px;
+      text-align: center;
+    }
+    video {
+      width: 100%;
+      max-height: 80vh;
+      background: #000;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+    }
+    h2 {
+      margin: 10px 0;
+      color: #4CAF50;
+    }
+    .status {
+      margin: 10px 0;
+      font-size: 14px;
+      color: #ccc;
+    }
+    .controls {
+      margin-top: 10px;
+    }
+    button {
+      background: #2196F3;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      margin: 0 5px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #0b7dda;
+    }
+    .error {
+      color: #f44336;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>⏯️ Reproduciendo: {{ nombre }}</h2>
+    <video id="video" controls></video>
+    <p class="status" id="status">Cargando stream...</p>
+    <div class="controls">
+      <button onclick="location.reload()">↻ Recargar</button>
+      <button onclick="toggleFullscreen()">⛶ Pantalla completa</button>
+    </div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const status = document.getElementById('status');
+    let hls;
+
+    async function cargarStream() {
+      status.textContent = "Solicitando stream seguro...";
+      try {
+        const resp = await fetch('{{ stream_url }}');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const m3u8Url = await resp.text();
+        
+        if (m3u8Url.trim().endsWith('.m3u8')) {
+          if (Hls.isSupported()) {
+            hls = new Hls();
+            hls.loadSource(m3u8Url.trim());
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+              status.textContent = "Stream cargado, reproduciendo...";
+              video.play().catch(e => console.warn("Auto-play bloqueado:", e));
+            });
+            hls.on(Hls.Events.ERROR, (evt, data) => {
+              if (data.fatal) {
+                status.classList.add('error');
+                status.textContent = "❌ Error de stream: " + data.type;
+                if (data.fatal && data.type === 'network.error') {
+                  setTimeout(() => location.reload(), 5000);
+                }
+              }
+            });
+          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = m3u8Url.trim();
+            video.addEventListener('loadedmetadata', () => {
+              status.textContent = "Stream cargado, reproduciendo...";
+              video.play().catch(e => console.warn("Auto-play bloqueado:", e));
+            });
+          } else {
+            status.classList.add('error');
+            status.textContent = "❌ Tu navegador no soporta HLS.";
+          }
+        } else {
+          status.classList.add('error');
+          status.textContent = "❌ URL inválida del stream.";
+        }
+      } catch (err) {
+        status.classList.add('error');
+        status.textContent = "❌ No se pudo obtener el stream: " + err.message;
+        console.error(err);
+        setTimeout(() => location.reload(), 5000);
+      }
+    }
+
+    cargarStream();
+
+    function toggleFullscreen() {
+      if (video.requestFullscreen) {
+        video.requestFullscreen();
+      } else if (video.webkitRequestFullscreen) {
+        video.webkitRequestFullscreen();
+      }
+    }
+
+    // Opcional: autorefresco cada 30 min (si el token expira)
+    setTimeout(() => {
+      status.textContent = "🔄 Renovando stream...";
+      if (hls) hls.destroy();
+      location.reload();
+    }, 1800000); // 30 minutos
+  </script>
+</body>
+</html>
