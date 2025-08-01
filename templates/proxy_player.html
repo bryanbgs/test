@@ -1,0 +1,47 @@
+<!-- templates/proxy_player.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>📺 Proxy Inverso - {{ nombre }}</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    body { margin: 0; background: #000; color: #fff; font-family: sans-serif; }
+    video { width: 100%; height: 90vh; object-fit: contain; }
+    .controls { margin: 10px; }
+    button { padding: 8px 16px; margin: 5px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2 style="text-align: center;">▶️ {{ nombre }}</h2>
+  <video id="video" controls></video>
+  <div class="controls">
+    <button onclick="location.reload()">↻ Recargar</button>
+    <button onclick="document.getElementById('video').requestFullscreen()">⛶ Pantalla completa</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const proxyM3U8 = '/proxy/{{ canal }}';
+
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(proxyM3U8);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        console.log('Reproduciendo vía proxy');
+        video.play();
+      });
+      hls.on(Hls.Events.ERROR, (e, data) => {
+        console.error('HLS.js error:', data);
+        if (data.fatal) {
+          alert('Error de reproducción. Recarga.');
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = proxyM3U8;
+      video.addEventListener('loadedmetadata', () => video.play());
+    }
+  </script>
+</body>
+</html>
