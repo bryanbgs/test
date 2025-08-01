@@ -1,5 +1,6 @@
 # lista.py
 from flask import Flask, Response, request, render_template_string, render_template
+from proxy import crear_proxy_inverso, manejar_segmento
 import scraper
 import time
 import os
@@ -194,3 +195,20 @@ def play_stream(canal):
     except Exception as e:
         print(f"[💥] Error en reproducción: {e}")
         return f"<h1>❌ Error interno: {str(e)}</h1><a href='/'>« Inicio</a>", 500
+
+@app.route("/proxy/<canal>")
+def proxy_playlist(canal):
+    print(f"[🔄] Iniciando proxy para: {canal}")
+    response = crear_proxy_inverso(canal)
+    if response is None:
+        return "Stream no disponible", 404
+    return response
+
+@app.route("/proxy/<canal>/<filename>")
+def proxy_segmento(canal, filename):
+    return manejar_segmento(canal, filename)
+
+@app.route("/proxy/<canal>_sub/<filename>")
+def proxy_subplaylist(canal, filename):
+    # Para sub-playlists (calidades múltiples)
+    return manejar_segmento(canal, filename)
