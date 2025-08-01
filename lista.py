@@ -212,3 +212,8 @@ def proxy_segmento(canal, filename):
 def proxy_subplaylist(canal, filename):
     # Para sub-playlists (calidades múltiples)
     return manejar_segmento(canal, filename)
+
+@app.route("/watch/<canal>")
+def watch(canal):
+    nombre = canal.replace("-", " ").upper()
+    return render_template("proxy_player.html", canal=canal, nombre=nombre)
