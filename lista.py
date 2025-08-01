@@ -125,11 +125,12 @@ def index():
     canales = leer_canales()
     for canal in canales:
         html += f'''
-        <li style="margin: 10px 0;">
-            <strong>{canal.upper()}</strong><br>
-            <a href="/stream/{canal}" target="_blank" style="color: #2196F3;">🎬 Obtener URL con tu IP</a>
-        </li>
-        '''
+<li style="margin: 10px 0;">
+    <strong>{canal.upper()}</strong><br>
+    <a href="/stream/{canal}" target="_blank" style="color: #2196F3;">🎬 Obtener URL</a> |
+    <a href="/play/{canal}" target="_blank" style="color: #FF9800;">▶️ Ver en reproductor</a>
+</li>
+'''
     html += f"""
     </ul>
     <h2>📄 Playlist:</h2>
