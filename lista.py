@@ -156,3 +156,40 @@ def debug():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+@app.route("/play/<canal>")
+def play_stream(canal):
+    x_forwarded_for = request.headers.get('X-Forwarded-For')
+    client_ip = x_forwarded_for.split(',')[0].strip() if x_forwarded_for else request.remote_addr
+    print(f"[▶️] Reproducción solicitada por {client_ip} para {canal}")
+
+    try:
+        # Generar la URL del stream con token para esta IP
+        url_con_token = scraper.obtener_stream_url_para_cliente(canal, client_ip, timeout=30)
+        if not url_con_token:
+            return """
+            <h1>❌ Stream no disponible</h1>
+            <p>No se pudo obtener el stream para tu IP.</p>
+            <a href='/'>« Volver al inicio</a>
+            """, 404
+
+        # Leer la plantilla HTML desde archivo o como string
+        template_path = os.path.join("templates", "player.html")
+        if os.path.exists(template_path):
+            with open(template_path, "r", encoding="utf-8") as f:
+                template = f.read()
+        else:
+            return "❌ Plantilla player.html no encontrada", 500
+
+        # Renderizar con datos
+        rendered = render_template_string(
+            template,
+            canal=canal,
+            nombre=canal.replace("-", " ").upper(),
+            stream_url=f"/stream/{canal}"  # La ruta interna que devuelve el .m3u8
+        )
+        return rendered
+
+    except Exception as e:
+        print(f"[💥] Error en reproducción: {e}")
+        return f"<h1>❌ Error interno: {str(e)}</h1><a href='/'>« Inicio</a>", 500
