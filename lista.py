@@ -130,6 +130,7 @@ def index():
     <strong>{canal.upper()}</strong><br>
     <a href="/stream/{canal}" target="_blank" style="color: #2196F3;">🎬 Obtener URL</a> |
     <a href="/play/{canal}" target="_blank" style="color: #FF9800;">▶️ Ver en reproductor</a>
+    <a href="/watch/{canal}" target="_blank" style="color: #FF9800;">▶️ Ver vía Proxy</a>
 </li>
 '''
     html += f"""
